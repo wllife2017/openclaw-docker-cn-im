@@ -29,7 +29,7 @@ RUN apt-get update && \
     websockify && \
     # 更新 npm 并安装全局包
     npm install -g npm@latest && \
-    npm install -g openclaw@2026.3.1 opencode-ai@latest playwright playwright-extra puppeteer-extra-plugin-stealth @steipete/bird && \
+    npm install -g openclaw@2026.3.2 opencode-ai@latest playwright playwright-extra puppeteer-extra-plugin-stealth @steipete/bird && \
     # 安装 bun 和 qmd
     curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash && \
     /usr/local/bin/bun install -g @tobilu/qmd && \
@@ -51,7 +51,7 @@ WORKDIR /home/node
 RUN cd /home/node/.openclaw/extensions && \
   git clone --depth 1 https://github.com/soimy/openclaw-channel-dingtalk.git dingtalk && \
   cd dingtalk && \
-  npm install --production && \
+  npm install --omit=dev --legacy-peer-deps && \
   timeout 300 openclaw plugins install -l . || true && \
   cd /home/node/.openclaw/extensions && \
   git clone --depth 1 -b v4.17.25 https://github.com/Daiyimo/openclaw-napcat.git napcat && \

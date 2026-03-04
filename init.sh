@@ -85,8 +85,170 @@ EOF
 
     echo "正在根据当前环境变量同步配置状态..."
     python3 -c "
-import json, sys, os
+import json, sys, os, re
 from datetime import datetime
+
+WECOM_ACCOUNT_ID_RE = re.compile(r'^[a-z0-9_-]+$')
+WECOM_ACCOUNT_FIELDS = {'token', 'encodingAesKey', 'adminUsers', 'agent', 'webhooks'}
+WECOM_RESERVED_FIELDS = {'enabled', 'commands', 'dmPolicy', 'groupPolicy'}
+
+
+def is_wecom_account_config(v):
+    return isinstance(v, dict) and any(k in v for k in WECOM_ACCOUNT_FIELDS)
+
+
+def normalize_wecom_config(channels):
+    wecom = channels.get('wecom')
+    if not isinstance(wecom, dict):
+        return
+
+    migrated = False
+    account_map = {}
+    preserved = {k: v for k, v in wecom.items() if k in WECOM_RESERVED_FIELDS}
+
+    # 新格式账号：channels.wecom.{accountId} = {...}
+    for k, v in wecom.items():
+        if k in WECOM_RESERVED_FIELDS:
+            continue
+        if WECOM_ACCOUNT_ID_RE.match(k) and is_wecom_account_config(v):
+            account_map[k] = v
+
+    # 旧格式单账号：channels.wecom.token / encodingAesKey / agent ...
+    legacy_account = {k: wecom[k] for k in WECOM_ACCOUNT_FIELDS if k in wecom}
+    if legacy_account:
+        default_cfg = account_map.get('default', {})
+        if not isinstance(default_cfg, dict):
+            default_cfg = {}
+        for k, v in legacy_account.items():
+            default_cfg.setdefault(k, v)
+        account_map['default'] = default_cfg
+        migrated = True
+
+    if account_map:
+        new_wecom = {**preserved, **account_map}
+        if new_wecom != wecom:
+            channels['wecom'] = new_wecom
+            migrated = True
+
+    if migrated:
+        print('✅ 企业微信配置已标准化为多账号结构（旧单账号已兼容为 default）')
+
+
+def deep_merge(dst, src):
+    if not isinstance(dst, dict) or not isinstance(src, dict):
+        return src
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            dst[k] = deep_merge(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
+def get_wecom_accounts(wecom):
+    if not isinstance(wecom, dict):
+        return []
+    accounts = []
+    for account_id, cfg in wecom.items():
+        if account_id in WECOM_RESERVED_FIELDS:
+            continue
+        if not is_wecom_account_config(cfg):
+            continue
+        accounts.append((account_id, cfg))
+    return accounts
+
+
+def merge_wecom_bots_from_env(channels, env):
+    raw = (env.get('WECOM_BOTS_JSON') or '').strip()
+    if not raw:
+        return False
+
+    try:
+        parsed = json.loads(raw)
+    except Exception as ex:
+        raise ValueError(f'WECOM_BOTS_JSON 不是合法 JSON: {ex}')
+
+    if not isinstance(parsed, dict):
+        raise ValueError('WECOM_BOTS_JSON 必须是对象，格式为 {"bot1": {...}, "bot2": {...}}')
+
+    # 兼容包装结构：{"accounts": {...}} 或 {"wecom": {...}}
+    if 'accounts' in parsed and isinstance(parsed.get('accounts'), dict):
+        parsed = parsed['accounts']
+    elif 'wecom' in parsed and isinstance(parsed.get('wecom'), dict):
+        parsed = parsed['wecom']
+
+    wecom = channels.get('wecom')
+    if not isinstance(wecom, dict):
+        wecom = {}
+        channels['wecom'] = wecom
+
+    changed = False
+    for account_id, account_cfg in parsed.items():
+        if not WECOM_ACCOUNT_ID_RE.match(str(account_id)):
+            raise ValueError(f'WECOM_BOTS_JSON 账号 ID 不合法: {account_id}，仅支持小写字母、数字、-、_')
+        if not isinstance(account_cfg, dict) or not is_wecom_account_config(account_cfg):
+            raise ValueError(f'WECOM_BOTS_JSON 账号配置非法: {account_id}，至少包含 token/encodingAesKey/agent/webhooks 中的一项')
+
+        old_cfg = wecom.get(account_id)
+        if not isinstance(old_cfg, dict):
+            old_cfg = {}
+        merged = deep_merge(old_cfg, account_cfg)
+        wecom[account_id] = merged
+        changed = True
+
+    if changed:
+        wecom['enabled'] = True
+        if 'commands' not in wecom:
+            wecom['commands'] = {'enabled': True, 'allowlist': ['/new', '/status', '/help', '/compact']}
+        print('✅ 已从 WECOM_BOTS_JSON 同步企业微信多账号配置')
+    return changed
+
+
+def validate_wecom_multi_accounts(channels):
+    wecom = channels.get('wecom')
+    if not isinstance(wecom, dict):
+        return
+
+    accounts = []
+    for account_id, cfg in wecom.items():
+        if account_id in WECOM_RESERVED_FIELDS:
+            continue
+        if not is_wecom_account_config(cfg):
+            continue
+        if not WECOM_ACCOUNT_ID_RE.match(account_id):
+            raise ValueError(f'企业微信账号 ID 不合法: {account_id}，仅支持小写字母、数字、-、_')
+        accounts.append((account_id, cfg))
+
+    if not accounts:
+        return
+
+    token_index = {}
+    agent_id_index = {}
+    for account_id, cfg in accounts:
+        account_token = (cfg.get('token') or '').strip()
+        if account_token:
+            token_index.setdefault(account_token, []).append(f'{account_id}.token')
+
+        agent = cfg.get('agent') if isinstance(cfg.get('agent'), dict) else None
+        if agent:
+            callback_token = (agent.get('token') or '').strip()
+            if callback_token:
+                token_index.setdefault(callback_token, []).append(f'{account_id}.agent.token')
+
+            agent_id = agent.get('agentId')
+            if agent_id is not None and str(agent_id).strip() != '':
+                agent_id_index.setdefault(str(agent_id).strip(), []).append(account_id)
+
+    duplicate_tokens = {k: v for k, v in token_index.items() if len(v) > 1}
+    if duplicate_tokens:
+        detail = '; '.join([f"{token}: {', '.join(paths)}" for token, paths in duplicate_tokens.items()])
+        raise ValueError(f'企业微信 Token 冲突（可能导致消息路由错乱）: {detail}')
+
+    duplicate_agent_ids = {k: v for k, v in agent_id_index.items() if len(v) > 1}
+    if duplicate_agent_ids:
+        detail = '; '.join([f"{agent_id}: {', '.join(ids)}" for agent_id, ids in duplicate_agent_ids.items()])
+        raise ValueError(f'企业微信 Agent ID 冲突（可能导致消息路由错乱）: {detail}')
+
 
 def sync():
     path = '$config_file'
@@ -112,6 +274,9 @@ def sync():
             old_bot_name = feishu_raw.pop('botName', 'OpenClaw Bot')
             feishu_raw['accounts'] = {'main': {'appId': old_app_id, 'appSecret': old_app_secret, 'botName': old_bot_name}}
 
+        # --- 0.5 企业微信旧格式迁移到多账号结构（兼容）---
+        normalize_wecom_config(ensure_path(config, ['channels']))
+
         # --- 1. 模型同步 ---
         sync_model = env.get('SYNC_MODEL_CONFIG', 'true').strip().lower()
         if sync_model in ('', 'true', '1', 'yes'):
@@ -126,12 +291,12 @@ def sync():
                 m_ids = [x.strip() for x in m_ids_str.split(',') if x.strip()]
                 
                 for m_id in m_ids:
-                    # 如果 m_id 包含 /，提取模型名部分
-                    actual_m_id = m_id.split('/')[-1] if '/' in m_id else m_id
-                    
+                    # 保留完整模型 ID（例如 minimaxai/minimax-m2.5），不要按 / 截断
+                    actual_m_id = m_id
+
                     m_obj = next((m for m in mlist if m.get('id') == actual_m_id), None)
                     if not m_obj:
-                        m_obj = {'id': actual_m_id, 'name': actual_m_id, 'reasoning': False, 'input': ['text', 'image'], 
+                        m_obj = {'id': actual_m_id, 'name': actual_m_id, 'reasoning': False, 'input': ['text', 'image'],
                                  'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}}
                         mlist.append(m_obj)
                     m_obj['contextWindow'] = int(context_window or 200000)
@@ -225,7 +390,15 @@ def sync():
             if e.get('DINGTALK_AGENT_ID'): c['agentId'] = e['DINGTALK_AGENT_ID']
 
         def sync_wecom(c, e):
-            c.update({'enabled': True, 'token': e['WECOM_TOKEN'], 'encodingAesKey': e['WECOM_ENCODING_AES_KEY']})
+            c['enabled'] = True
+            default_cfg = c.get('default')
+            if not isinstance(default_cfg, dict):
+                default_cfg = {}
+            default_cfg.update({'token': e['WECOM_TOKEN'], 'encodingAesKey': e['WECOM_ENCODING_AES_KEY']})
+            c['default'] = default_cfg
+            # 清理旧字段，确保统一到多账号格式
+            c.pop('token', None)
+            c.pop('encodingAesKey', None)
             if 'commands' not in c:
                 c['commands'] = {'enabled': True, 'allowlist': ['/new', '/status', '/help', '/compact']}
 
@@ -273,9 +446,27 @@ def sync():
                     entries[cid]['enabled'] = False
                     print(f'🚫 环境变量缺失，已禁用渠道: {cid}')
 
+        # 从 JSON 环境变量同步企业微信多账号
+        merge_wecom_bots_from_env(channels, env)
+
+        # 若存在企业微信多账号配置，确保插件启用并写入安装信息
+        wecom_accounts = get_wecom_accounts(channels.get('wecom'))
+        if wecom_accounts:
+            entries['wecom'] = {'enabled': True}
+            if 'wecom' not in installs:
+                installs['wecom'] = {
+                    'source': 'npm',
+                    'spec': '@sunnoy/wecom',
+                    'installPath': '/home/node/.openclaw/extensions/wecom',
+                    'installedAt': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                }
+
         # 汇总所有已启用的插件到 allow 列表
         plugins['allow'] = [k for k, v in entries.items() if v.get('enabled')]
         print('📦 已配置插件集合: ' + ', '.join(plugins['allow']))
+
+        # --- 2.5 企业微信多账号冲突检测 ---
+        validate_wecom_multi_accounts(channels)
 
         # --- 3. Gateway 同步 ---
         if env.get('OPENCLAW_GATEWAY_TOKEN'):

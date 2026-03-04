@@ -153,8 +153,30 @@
     },
     "wecom": {
       "enabled": true,
-      "token": "your-token",
-      "encodingAesKey": "your-aes-key"
+      "bot1": {
+        "token": "Bot1 的 Token",
+        "encodingAesKey": "Bot1 的 EncodingAESKey",
+        "adminUsers": ["admin1"],
+        "agent": {
+          "corpId": "企业 CorpID",
+          "corpSecret": "Bot1 应用 Secret",
+          "agentId": 1000001,
+          "token": "Bot1 回调 Token",
+          "encodingAesKey": "Bot1 回调 EncodingAESKey"
+        },
+        "webhooks": {
+          "ops-group": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+        }
+      },
+      "bot2": {
+        "token": "Bot2 的 Token",
+        "encodingAesKey": "Bot2 的 EncodingAESKey",
+        "agent": {
+          "corpId": "企业 CorpID",
+          "corpSecret": "Bot2 应用 Secret",
+          "agentId": 1000002
+        }
+      }
     }
   },
   "gateway": {

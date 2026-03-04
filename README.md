@@ -498,11 +498,11 @@ QQBOT_CLIENT_SECRET=你的AppSecret
 ### 1. 获取企业微信凭证
 
 1. 访问 [企业微信管理后台](https://work.weixin.qq.com/)
-2. 进入"应用管理" - 用 API 模式创建"智能机器人"应用
-3. 在应用的"接收消息"配置中设置 Token 和 EncodingAESKey
-4. 设置"接收消息"URL 为你的服务地址（例如：https://your-domain.com/webhooks/wxwork），需要当前服务可公网访问
+2. 进入"应用管理"，用 API 模式创建一个或多个"智能机器人"应用
+3. 在每个应用的"接收消息"配置中设置 Token 和 EncodingAESKey
+4. 配置对应回调 URL（见下方单账号/多账号路径说明）
 
-### 2. 环境变量配置
+### 2. 单账号配置（兼容旧格式）
 
 在 `.env` 文件中添加：
 
@@ -510,6 +510,72 @@ QQBOT_CLIENT_SECRET=你的AppSecret
 WECOM_TOKEN=your-token
 WECOM_ENCODING_AES_KEY=your-aes-key
 ```
+
+> 启动后会自动写入 [`channels.wecom.default`](openclaw.json.example:155) 结构，旧配置无需手工迁移。
+
+### 3. 多账号配置（Multi-Bot）
+
+在 [`openclaw.json`](README.md:648) 的 [`channels.wecom`](openclaw.json.example:154) 下使用字典结构，每个 key 为账号 ID（如 `bot1`、`bot2`），每个 value 为该账号独立配置：
+
+```json
+{
+  "channels": {
+    "wecom": {
+      "bot1": {
+        "token": "Bot1 的 Token",
+        "encodingAesKey": "Bot1 的 EncodingAESKey",
+        "adminUsers": ["admin1"],
+        "agent": {
+          "corpId": "企业 CorpID",
+          "corpSecret": "Bot1 应用 Secret",
+          "agentId": 1000001,
+          "token": "Bot1 回调 Token",
+          "encodingAesKey": "Bot1 回调 EncodingAESKey"
+        },
+        "webhooks": {
+          "ops-group": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+        }
+      },
+      "bot2": {
+        "token": "Bot2 的 Token",
+        "encodingAesKey": "Bot2 的 EncodingAESKey",
+        "agent": {
+          "corpId": "企业 CorpID",
+          "corpSecret": "Bot2 应用 Secret",
+          "agentId": 1000002
+        }
+      }
+    }
+  }
+}
+```
+
+### 4. 多账号环境变量配置（Docker Compose）
+
+现在支持直接在 [`.env.example`](.env.example) / `.env` 中通过 `WECOM_BOTS_JSON` 配置多账号，并由 [`docker-compose.yml`](docker-compose.yml) 自动透传到容器。
+
+示例（单行 JSON）：
+
+```bash
+WECOM_BOTS_JSON={"bot1":{"token":"t1","encodingAesKey":"k1","agent":{"corpId":"wwxxx","corpSecret":"s1","agentId":1000001}},"bot2":{"token":"t2","encodingAesKey":"k2","agent":{"corpId":"wwxxx","corpSecret":"s2","agentId":1000002}}}
+```
+
+说明：
+
+- `WECOM_BOTS_JSON` 会与现有 [`channels.wecom`](openclaw.json.example:154) 做深度合并，不会粗暴覆盖整个对象
+- 若同时配置了 `WECOM_TOKEN` / `WECOM_ENCODING_AES_KEY`，会写入 `default` 账号
+- 若 `WECOM_BOTS_JSON` 中也包含 `default`，其字段会覆盖同名字段
+
+### 5. 多账号规则与回调路径
+
+- 账号 ID 仅支持小写字母、数字、`-`、`_`
+- 旧单账号结构（`token` 直接写在 `wecom` 下）会自动识别并迁移为 `default` 账号
+- WeCom 机器人回调路径按账号分配：`/webhooks/wecom/{accountId}`，例如 `bot1` 对应 `/webhooks/wecom/bot1`
+- Agent 回调路径按账号分配：`/webhooks/app/{accountId}`，例如 `bot2` 对应 `/webhooks/app/bot2`
+- 动态会话 ID 按账号隔离：`wecom-{accountId}-dm-{userId}`、`wecom-{accountId}-group-{chatId}`
+- 启动时会自动检测重复 Token / Agent ID，避免消息路由冲突
+
+⚠️ 多账号模式下，需要在企业微信后台为每个账号分别配置对应 URL（例如 `/webhooks/wecom/bot1`）。
 
 > 💡 **参考项目**：[openclaw-plugin-wecom](https://github.com/sunnoy/openclaw-plugin-wecom) - 企业微信插件完整实现示例
 
