@@ -95,6 +95,9 @@
       "compaction": {
         "mode": "safeguard"
       },
+      "sandbox": {
+        "mode": "off"
+      },
       "elevatedDefault": "full",
       "maxConcurrent": 4,
       "subagents": {
@@ -114,16 +117,27 @@
     "native": "auto",
     "nativeSkills": "auto"
   },
+  "tools": {
+    "profile": "full",
+    "sessions": {
+      "visibility": "all"
+    },
+    "fs": {
+      "workspaceOnly": true
+    }
+  },
   "channels": {
     "telegram": {
-      "dmPolicy": "pairing",
+      "dmPolicy": "open",
+      "allowFrom": ["*"],
       "botToken": "your-token",
-      "groupPolicy": "allowlist",
+      "groupPolicy": "open",
       "streamMode": "partial"
     },
     "feishu": {
       "enabled": true,
-      "dmPolicy": "pairing",
+      "dmPolicy": "open",
+      "allowFrom": ["*"],
       "groupPolicy": "open",
       "accounts": {
         "default": {
@@ -149,10 +163,16 @@
     "qqbot": {
       "enabled": true,
       "appId": "your-qqbot-app-id",
-      "clientSecret": "your-qqbot-client-secret"
+      "clientSecret": "your-qqbot-client-secret",
+      "dmPolicy": "open",
+      "allowFrom": ["*"],
+      "groupPolicy": "open"
     },
     "wecom": {
       "enabled": true,
+      "dmPolicy": "open",
+      "allowFrom": ["*"],
+      "groupPolicy": "open",
       "bot1": {
         "token": "Bot1 的 Token",
         "encodingAesKey": "Bot1 的 EncodingAESKey",

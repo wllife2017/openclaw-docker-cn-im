@@ -57,6 +57,7 @@ sync_config_with_env() {
   "agents": {
     "defaults": {
       "compaction": { "mode": "safeguard" },
+      "sandbox": { "mode": "off" },
       "elevatedDefault": "full",
       "maxConcurrent": 4,
       "subagents": { "maxConcurrent": 8 }
@@ -64,6 +65,15 @@ sync_config_with_env() {
   },
   "messages": { "ackReactionScope": "group-mentions", "tts": { "edge": { "voice": "zh-CN-XiaoxiaoNeural" } } },
   "commands": { "native": "auto", "nativeSkills": "auto" },
+  "tools": {
+    "profile": "full",
+    "sessions": {
+      "visibility": "all"
+    },
+    "fs": {
+      "workspaceOnly": true
+    }
+  },
   "channels": {},
   "plugins": { "entries": {}, "installs": {} },
     "memory": {
@@ -91,6 +101,30 @@ from datetime import datetime
 WECOM_ACCOUNT_ID_RE = re.compile(r'^[a-z0-9_-]+$')
 WECOM_ACCOUNT_FIELDS = {'token', 'encodingAesKey', 'adminUsers', 'agent', 'webhooks'}
 WECOM_RESERVED_FIELDS = {'enabled', 'commands', 'dmPolicy', 'groupPolicy'}
+
+
+def strip_json_comments_and_trailing_commas(raw):
+    raw = re.sub(r'/\*.*?\*/', '', raw, flags=re.S)
+    raw = re.sub(r'(^|\s)//.*?$', '', raw, flags=re.M)
+    raw = re.sub(r'(^|\s)#.*?$', '', raw, flags=re.M)
+    raw = re.sub(r',(?=\s*[}\]])', '', raw)
+    return raw
+
+
+def load_config_with_compat(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        raw = f.read()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as original_error:
+        sanitized = strip_json_comments_and_trailing_commas(raw)
+        try:
+            config = json.loads(sanitized)
+            print('⚠️ 检测到 openclaw.json 含注释或尾随逗号，已按兼容模式自动解析并在保存时标准化为合法 JSON')
+            return config
+        except json.JSONDecodeError:
+            raise ValueError(f'openclaw.json 格式非法: {original_error}')
 
 
 def is_wecom_account_config(v):
@@ -253,9 +287,8 @@ def validate_wecom_multi_accounts(channels):
 def sync():
     path = os.environ.get('CONFIG_FILE', '/home/node/.openclaw/openclaw.json')
     try:
-        with open(path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        
+        config = load_config_with_compat(path)
+
         env = os.environ
         
         def ensure_path(cfg, keys):
@@ -374,7 +407,15 @@ def sync():
             if p2_active: msg += f', 已启用备用提供商: {p2_name}'
             print(msg)
 
-        # --- 2. 渠道与插件同步 (声明式) ---
+        # --- 2. Agent 与工具配置同步（兼容 OpenClaw 3.2） ---
+        ensure_path(config, ['agents', 'defaults', 'sandbox'])['mode'] = 'off'
+        tools = ensure_path(config, ['tools'])
+        tools['profile'] = 'full'
+        ensure_path(tools, ['sessions'])['visibility'] = 'all'
+        ensure_path(tools, ['fs'])['workspaceOnly'] = True
+        print('✅ Agent/工具配置同步完成: sandbox.mode=off, profile=full, sessions.visibility=all, fs.workspaceOnly=true')
+
+        # --- 3. 渠道与插件同步 (声明式) ---
         channels = ensure_path(config, ['channels'])
         plugins = ensure_path(config, ['plugins'])
         entries = ensure_path(plugins, ['entries'])
@@ -382,9 +423,13 @@ def sync():
 
         if env.get('OPENCLAW_PLUGINS_ENABLED'):
             plugins['enabled'] = env['OPENCLAW_PLUGINS_ENABLED'].lower() == 'true'
+
+        feishu_official_plugin_env = env.get('FEISHU_OFFICIAL_PLUGIN_ENABLED', '').strip().lower()
+        feishu_official_plugin_enabled = feishu_official_plugin_env in ('1', 'true', 'yes', 'on')
+        feishu_official_plugin_explicit = feishu_official_plugin_env in ('0', '1', 'false', 'true', 'no', 'yes', 'off', 'on')
         
         def sync_feishu(c, e):
-            c.update({'enabled': True, 'dmPolicy': 'pairing', 'groupPolicy': 'open'})
+            c.update({'enabled': True, 'dmPolicy': 'open', 'allowFrom': ['*'], 'groupPolicy': 'open'})
             default_account = ensure_path(c, ['accounts', 'default'])
             default_account.update({
                 'appId': e['FEISHU_APP_ID'],
@@ -395,7 +440,7 @@ def sync():
 
         def sync_dingtalk(c, e):
             c.update({
-                'enabled': True, 'clientId': e['DINGTALK_CLIENT_ID'], 
+                'enabled': True, 'clientId': e['DINGTALK_CLIENT_ID'],
                 'clientSecret': e['DINGTALK_CLIENT_SECRET'],
                 'robotCode': e.get('DINGTALK_ROBOT_CODE') or e['DINGTALK_CLIENT_ID'],
                 'dmPolicy': 'open', 'groupPolicy': 'open', 'messageType': 'markdown',
@@ -405,7 +450,7 @@ def sync():
             if e.get('DINGTALK_AGENT_ID'): c['agentId'] = e['DINGTALK_AGENT_ID']
 
         def sync_wecom(c, e):
-            c['enabled'] = True
+            c.update({'enabled': True, 'dmPolicy': 'open', 'allowFrom': ['*'], 'groupPolicy': 'open' })
             default_cfg = c.get('default')
             if not isinstance(default_cfg, dict):
                 default_cfg = {}
@@ -420,14 +465,14 @@ def sync():
         # 同步规则矩阵
         sync_rules = [
             (['TELEGRAM_BOT_TOKEN'], 'telegram', 
-             lambda c, e: c.update({'botToken': e['TELEGRAM_BOT_TOKEN'], 'dmPolicy': 'pairing', 'groupPolicy': 'allowlist', 'streamMode': 'partial'}),
+             lambda c, e: c.update({'botToken': e['TELEGRAM_BOT_TOKEN'], 'dmPolicy': 'open', 'allowFrom': ['*'], 'groupPolicy': 'open', 'streamMode': 'partial'}),
              None),
             (['FEISHU_APP_ID', 'FEISHU_APP_SECRET'], 'feishu', sync_feishu,
              {'source': 'npm', 'spec': '@openclaw/feishu', 'installPath': '/home/node/.openclaw/extensions/feishu'}),
             (['DINGTALK_CLIENT_ID', 'DINGTALK_CLIENT_SECRET'], 'dingtalk', sync_dingtalk,
              {'source': 'npm', 'spec': 'https://github.com/soimy/clawdbot-channel-dingtalk.git', 'installPath': '/home/node/.openclaw/extensions/dingtalk'}),
             (['QQBOT_APP_ID', 'QQBOT_CLIENT_SECRET'], 'qqbot',
-             lambda c, e: c.update({'enabled': True, 'appId': e['QQBOT_APP_ID'], 'clientSecret': e['QQBOT_CLIENT_SECRET']}),
+             lambda c, e: c.update({'enabled': True, 'appId': e['QQBOT_APP_ID'], 'clientSecret': e['QQBOT_CLIENT_SECRET'], 'dmPolicy': 'open', 'allowFrom': ['*'], 'groupPolicy': 'open'}),
              {'source': 'path', 'sourcePath': '/home/node/.openclaw/qqbot', 'installPath': '/home/node/.openclaw/extensions/qqbot'}),
             (['NAPCAT_REVERSE_WS_PORT'], 'napcat',
                lambda c, e: c.update({
@@ -481,14 +526,29 @@ def sync():
         elif wecom_explicitly_disabled:
             print('ℹ️ 企业微信渠道已禁用，跳过根据历史多账号配置自动启用插件')
 
+        # 飞书官方插件开关（与旧版 feishu 渠道互斥）
+        if feishu_official_plugin_explicit:
+            entries['feishu-openclaw-plugin'] = {'enabled': feishu_official_plugin_enabled}
+            entries['feishu'] = {'enabled': not feishu_official_plugin_enabled}
+            if feishu_official_plugin_enabled:
+                print('✅ 已启用插件开关: feishu-openclaw-plugin')
+                print('🚫 已自动禁用旧版渠道: feishu')
+            else:
+                print('🚫 已禁用插件开关: feishu-openclaw-plugin')
+                print('✅ 已自动启用旧版渠道: feishu')
+        else:
+            entries['feishu-openclaw-plugin'] = {'enabled': False}
+            entries['feishu'] = {'enabled': True}
+            print('ℹ️ FEISHU_OFFICIAL_PLUGIN_ENABLED 未配置，默认启用旧版 feishu 渠道并禁用官方插件')
+
         # 汇总所有已启用的插件到 allow 列表
         plugins['allow'] = [k for k, v in entries.items() if v.get('enabled')]
         print('📦 已配置插件集合: ' + ', '.join(plugins['allow']))
 
-        # --- 2.5 企业微信多账号冲突检测 ---
+        # --- 3.5 企业微信多账号冲突检测 ---
         validate_wecom_multi_accounts(channels)
 
-        # --- 3. Gateway 同步 ---
+        # --- 4. Gateway 同步 ---
         if env.get('OPENCLAW_GATEWAY_TOKEN'):
             gw = ensure_path(config, ['gateway'])
             gw['port'] = int(env.get('OPENCLAW_GATEWAY_PORT') or 18789)

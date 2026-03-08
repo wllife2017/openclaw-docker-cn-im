@@ -16,20 +16,28 @@ RUN apt-get update && \
     ca-certificates \
     chromium \
     curl \
+    build-essential \
     fonts-liberation \
     fonts-noto-cjk \
     fonts-noto-color-emoji \
     git \
     gosu \
     jq \
+    openssh-client \
+    procps \
     python3 \
     socat \
     tini \
     unzip \
     websockify && \
+    # 配置 git 使用 HTTPS 替代 SSH
+    git config --system url."https://github.com/".insteadOf ssh://git@github.com/ && \
     # 更新 npm 并安装全局包
     npm install -g npm@latest && \
-    npm install -g openclaw@2026.3.2 opencode-ai@latest playwright playwright-extra puppeteer-extra-plugin-stealth @steipete/bird && \
+    npm install -g openclaw@2026.3.7 opencode-ai@latest playwright playwright-extra puppeteer-extra-plugin-stealth @steipete/bird && \
+    # 安装飞书官方插件 CLI
+    curl -fsSL https://sf3-cn.feishucdn.com/obj/open-platform-opendoc/4d184b1ba733bae2423a89e196a2ef8f_QATOjKH1WN.tgz -o /tmp/feishu-openclaw-plugin-onboard-cli.tgz && \
+    npm install -g /tmp/feishu-openclaw-plugin-onboard-cli.tgz && \
     # 安装 bun 和 qmd
     curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash && \
     /usr/local/bin/bun install -g @tobilu/qmd && \
@@ -63,6 +71,8 @@ RUN cd /home/node/.openclaw/extensions && \
   cd qqbot && \
   timeout 300 openclaw plugins install . || true && \
   timeout 300 openclaw plugins install @sunnoy/wecom || true && \
+  # 预执行安装命令（容器内需手动交互，此处仅作声明或环境准备）
+  # feishu-plugin-onboard install && \
   find /home/node/.openclaw/extensions -name ".git" -type d -exec rm -rf {} + && \
   rm -rf /home/node/.openclaw/qqbot/.git && \
   rm -rf /tmp/* /home/node/.npm /home/node/.cache
@@ -70,9 +80,10 @@ RUN cd /home/node/.openclaw/extensions && \
 # 3. 最终配置
 USER root
 
-# 复制初始化脚本
+# 复制初始化脚本并确保换行符为 LF
 COPY ./init.sh /usr/local/bin/init.sh
-RUN chmod +x /usr/local/bin/init.sh
+RUN sed -i 's/\r$//' /usr/local/bin/init.sh && \
+    chmod +x /usr/local/bin/init.sh
 
 # 设置环境变量
 ENV HOME=/home/node \
