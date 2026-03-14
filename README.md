@@ -14,10 +14,10 @@
   <tbody>
     <tr>
       <td align="center" valign="middle">
-        <img src="https://sweet-union-c569.justlikemaki.workers.dev/justlikemaki/openclaw-docker-cn-im?layout=compact&theme=github" alt="openclaw-docker-cn-im" style="width: 100%; max-width: 520px; height: 420px; object-fit: contain;" />
+        <img src="https://sweet-union-c569.justlikemaki.workers.dev/justlikemaki/openclaw-docker-cn-im?layout=compact&theme=github" alt="openclaw-docker-cn-im" style="width: 100%; max-width: 520px; height: 320px; object-fit: contain;" />
       </td>
       <td align="center" valign="middle">
-        <img src="sponsor.png" alt="微信赞赏码" style="width: 100%; max-width: 260px; height: 260px; object-fit: cover; object-position: center;" />
+        <img src="sponsor.png" alt="微信赞赏码" style="width: 100%; max-width: 260px; height: 320px; object-fit: cover; object-position: center;" />
       </td>
     </tr>
   </tbody>
