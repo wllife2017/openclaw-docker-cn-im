@@ -32,7 +32,7 @@
 - **全平台支持**：预装飞书（官方/旧版）、钉钉、QQ 机器人、企业微信插件，并集成 [Agent Reach](https://github.com/Panniantong/Agent-Reach) 支持 Twitter、小红书、微博、抖音等全网渠道。
 - **配置驱动**：支持通过环境变量自动生成配置，提供 [`.env.example`](.env.example) 快速上手。
 - **工具集增强**：集成 [Agent Reach](https://github.com/Panniantong/Agent-Reach)、OpenCode AI、Playwright、FFmpeg、中文 TTS 等 AI 常用工具。
-- **安全沙箱**：支持 Docker-in-Docker 沙箱模式，实现 Python 代码与 Shell 脚本的隔离运行，确保宿主机安全。
+- **安全沙箱**：支持 Docker-in-Docker 沙箱模式，实现 Python 代码与 Shell 脚本的隔离运行，确保宿主机安全(使用官方最小镜像，无使用示例)。
 - **生产友好**：支持数据持久化挂载，提供独立工具容器用于飞书插件安装等一次性操作。
 
 ## 📖 文档索引
