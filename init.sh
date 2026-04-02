@@ -1880,6 +1880,10 @@ def apply_feishu_plugin_switch(ctx):
 
 
 def finalize_plugins(ctx):
+    # 彻底移除旧版 ID，确保生成的配置中不再出现
+    ctx.entries.pop('qqbot', None)
+    ctx.entries.pop('feishu-openclaw-plugin', None)
+    
     ctx.plugins['allow'] = [name for name, entry in ctx.entries.items() if entry.get('enabled')]
     print('📦 已配置插件集合: ' + ', '.join(ctx.plugins['allow']))
 
